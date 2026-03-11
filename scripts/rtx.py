@@ -6,6 +6,7 @@ import torch
 from PIL import Image
 
 from modules import devices, modelloader, shared
+from modules.script_callbacks import on_script_unloaded
 from modules.upscaler import Upscaler, UpscalerData
 
 
@@ -97,3 +98,10 @@ def extra_upscalers():
 
 
 modelloader.load_upscalers = extra_upscalers
+
+
+def revert():
+    modelloader.load_upscalers = orig
+
+
+on_script_unloaded(revert)
