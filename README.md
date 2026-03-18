@@ -7,9 +7,6 @@ This is an Extension for [Forge Neo](https://github.com/Haoming02/sd-webui-forge
 > Nvidia GPU is Required
 
 <table>
-  <caption>
-    <b>Ultra</b> took <b>1.2s</b> on a <b>RTX 3060</b>
-  </caption>
   <tr>
     <th>256x256</th>
     <th>1024x1024</th>
@@ -20,27 +17,21 @@ This is an Extension for [Forge Neo](https://github.com/Haoming02/sd-webui-forge
   </tr>
 </table>
 
+> **Ultra** option took `0.7s` on a **RTX 3060**
+
 ## Features
-> Select the preset from the `Upscaler` dropdown in **Extras**
 
 > [!Tip]
 > `Scale by` mode is recommended
 
-#### Upscale
+- **Upscale:** Super-resolution an image by the desired ratio
 
-- Super-resolution an image by the desired amount
-- `Resize` must be divisible by `0.25`
-- The **HD** variants are meant for high quality images with no compression artifacts
+> Enable the following options in the **Settings**
 
-#### Deblur
+- **Deblur:** Sharpen an image
+- **Denoise:** Reduce noises from an image
+- **HD:** Upscale high quality images with little compression artifacts
 
-- Sharpen an image
-- `Resize` must be `1.0`
-
-#### Denoise
-
-- Remove noises from an image
-- `Resize` must be `1.0`
-
-## TODO
-- [ ] Support Video
+> [!Important]
+> - For **Upscale**, the `Resize` must be divisible by `0.25`
+> - For **Deblur** / **Denoise**, the `Resize` must be `1.0`

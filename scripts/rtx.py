@@ -6,7 +6,8 @@ import torch
 from PIL import Image
 
 from modules import devices, modelloader, shared
-from modules.script_callbacks import on_script_unloaded
+from modules.script_callbacks import on_script_unloaded, on_ui_settings
+from modules.shared import OptionInfo, opts
 from modules.upscaler import Upscaler, UpscalerData
 
 
@@ -15,29 +16,36 @@ class UpscalerNvidia(Upscaler):
 
     def __init__(self):
         super().__init__(False)
+        self.scalers = []
 
-        self.scalers = [
-            # Standard Upscaling
-            UpscalerData("[Nvidia] Speed", "LOW", self, 2),
-            UpscalerData("[Nvidia] Balanced", "MEDIUM", self, 2),
-            UpscalerData("[Nvidia] Quality", "HIGH", self, 2),
-            UpscalerData("[Nvidia] Ultra", "ULTRA", self, 4),
-            # Denoise
-            UpscalerData("[Nvidia] Denoise Light", "DENOISE_LOW", self, 1),
-            UpscalerData("[Nvidia] Denoise Moderate", "DENOISE_MEDIUM", self, 1),
-            UpscalerData("[Nvidia] Denoise Aggressive", "DENOISE_HIGH", self, 1),
-            UpscalerData("[Nvidia] Denoise Maximum", "DENOISE_ULTRA", self, 1),
-            # Deblur
-            UpscalerData("[Nvidia] Deblur Light", "DEBLUR_LOW", self, 1),
-            UpscalerData("[Nvidia] Deblur Moderate", "DEBLUR_MEDIUM", self, 1),
-            UpscalerData("[Nvidia] Deblur Aggressive", "DEBLUR_HIGH", self, 1),
-            UpscalerData("[Nvidia] Deblur Maximum", "DEBLUR_ULTRA", self, 1),
-            # High-Bitrate
-            UpscalerData("[Nvidia] HD Speed", "HIGHBITRATE_LOW", self, 2),
-            UpscalerData("[Nvidia] HD Balanced", "HIGHBITRATE_MEDIUM", self, 2),
-            UpscalerData("[Nvidia] HD Quality", "HIGHBITRATE_HIGH", self, 2),
-            UpscalerData("[Nvidia] HD Ultra", "HIGHBITRATE_ULTRA", self, 4),
-        ]
+        if "Upscale" in getattr(opts, "nvvfx_options", ["Upscale"]):
+            self.scalers += [
+                UpscalerData("[Nvidia] Speed", "LOW", self, 2),
+                UpscalerData("[Nvidia] Balanced", "MEDIUM", self, 2),
+                UpscalerData("[Nvidia] Quality", "HIGH", self, 2),
+                UpscalerData("[Nvidia] Ultra", "ULTRA", self, 4),
+            ]
+        if "Deblur" in getattr(opts, "nvvfx_options", ["Upscale"]):
+            self.scalers += [
+                UpscalerData("[Nvidia] Deblur Light", "DEBLUR_LOW", self, 1),
+                UpscalerData("[Nvidia] Deblur Moderate", "DEBLUR_MEDIUM", self, 1),
+                UpscalerData("[Nvidia] Deblur Aggressive", "DEBLUR_HIGH", self, 1),
+                UpscalerData("[Nvidia] Deblur Maximum", "DEBLUR_ULTRA", self, 1),
+            ]
+        if "Denoise" in getattr(opts, "nvvfx_options", ["Upscale"]):
+            self.scalers += [
+                UpscalerData("[Nvidia] Denoise Light", "DENOISE_LOW", self, 1),
+                UpscalerData("[Nvidia] Denoise Moderate", "DENOISE_MEDIUM", self, 1),
+                UpscalerData("[Nvidia] Denoise Aggressive", "DENOISE_HIGH", self, 1),
+                UpscalerData("[Nvidia] Denoise Maximum", "DENOISE_ULTRA", self, 1),
+            ]
+        if "HD" in getattr(opts, "nvvfx_options", ["Upscale"]):
+            self.scalers += [
+                UpscalerData("[Nvidia] HD Speed", "HIGHBITRATE_LOW", self, 2),
+                UpscalerData("[Nvidia] HD Balanced", "HIGHBITRATE_MEDIUM", self, 2),
+                UpscalerData("[Nvidia] HD Quality", "HIGHBITRATE_HIGH", self, 2),
+                UpscalerData("[Nvidia] HD Ultra", "HIGHBITRATE_ULTRA", self, 4),
+            ]
 
     def upscale(self, img: Image.Image, scale: float, selected_model: str):
         image: Image.Image = img.convert("RGB")
@@ -74,7 +82,7 @@ class UpscalerNvidia(Upscaler):
         vsr.close()
 
         tensor = output.clamp(0.0, 1.0).permute(1, 2, 0)
-        image = (tensor.cpu().numpy() * 255.0).astype("uint8")
+        image = tensor.mul_(255.0).clamp_(0.0, 255.0).cpu().numpy().astype("uint8")
 
         return Image.fromarray(image)
 
@@ -86,6 +94,23 @@ class UpscalerNvidia(Upscaler):
 
     def find_models(self, *args, **kwargs):
         raise NotImplementedError
+
+
+def on_settings():
+    from gradio import CheckboxGroup
+
+    args = {"section": ("nvvfx", "Nvidia VFX"), "category_id": "postprocessing"}
+
+    opts.add_option(
+        "nvvfx_options",
+        OptionInfo(
+            ["Upscale"],
+            "Visible Options",
+            CheckboxGroup,
+            lambda: {"choices": ("Upscale", "Deblur", "Denoise", "HD")},
+            **args,
+        ).needs_reload_ui(),
+    )
 
 
 orig = modelloader.load_upscalers
@@ -104,4 +129,5 @@ def revert():
     modelloader.load_upscalers = orig
 
 
+on_ui_settings(on_settings)
 on_script_unloaded(revert)
