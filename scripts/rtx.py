@@ -1,3 +1,4 @@
+import math
 from functools import wraps
 
 import numpy as np
@@ -14,11 +15,12 @@ from modules.upscaler import Upscaler, UpscalerData
 class UpscalerNvidia(Upscaler):
     name = "Nvidia VFX"
 
-    _cache_config: tuple[int] = None
-    _cache_model: nvvfx.VideoSuperRes = None
-
     def __init__(self):
         super().__init__(False)
+        self.device = devices.device
+        assert self.device.type == "cuda"
+        self.stream = torch.cuda.Stream(device=self.device)
+
         self.scalers = []
 
         if "Upscale" in getattr(opts, "nvvfx_options", ["Upscale"]):
@@ -26,7 +28,7 @@ class UpscalerNvidia(Upscaler):
                 UpscalerData("[Nvidia] Speed", "LOW", self, 2),
                 UpscalerData("[Nvidia] Balanced", "MEDIUM", self, 2),
                 UpscalerData("[Nvidia] Quality", "HIGH", self, 2),
-                UpscalerData("[Nvidia] Ultra", "ULTRA", self, 4),
+                UpscalerData("[Nvidia] Ultra", "ULTRA", self, 2),
             ]
         if "Deblur" in getattr(opts, "nvvfx_options", ["Upscale"]):
             self.scalers += [
@@ -47,25 +49,8 @@ class UpscalerNvidia(Upscaler):
                 UpscalerData("[Nvidia] HD Speed", "HIGHBITRATE_LOW", self, 2),
                 UpscalerData("[Nvidia] HD Balanced", "HIGHBITRATE_MEDIUM", self, 2),
                 UpscalerData("[Nvidia] HD Quality", "HIGHBITRATE_HIGH", self, 2),
-                UpscalerData("[Nvidia] HD Ultra", "HIGHBITRATE_ULTRA", self, 4),
+                UpscalerData("[Nvidia] HD Ultra", "HIGHBITRATE_ULTRA", self, 2),
             ]
-
-    @classmethod
-    def get_model(cls, quality: int, width: int, height: int):
-        config = (quality, width, height)
-        if config == cls._cache_config:
-            return cls._cache_model
-
-        if cls._cache_model is not None:
-            cls._cache_model.close()
-
-        vsr = nvvfx.VideoSuperRes(quality=quality)
-        vsr.output_width = width
-        vsr.output_height = height
-        vsr.load()
-
-        cls._cache_model = vsr
-        return vsr
 
     @torch.inference_mode()
     def upscale(self, img: Image.Image, scale: float, selected_model: str):
@@ -83,41 +68,50 @@ class UpscalerNvidia(Upscaler):
 
         orig_w, orig_h = image.size
 
-        pad_w: int = (8 - (orig_w % 8)) % 8
-        pad_h: int = (8 - (orig_h % 8)) % 8
+        padded_w: int = math.ceil(orig_w / 32) * 32
+        padded_h: int = math.ceil(orig_h / 32) * 32
 
+        pad_w: int = padded_w - orig_w
+        pad_h: int = padded_h - orig_h
+
+        final_w: int = math.floor(orig_w * scale)
+        final_h: int = math.floor(orig_h * scale)
+
+        target_w: int = round(padded_w * scale)
+        target_h: int = round(padded_h * scale)
+        assert target_w % 8 == 0 and target_h % 8 == 0
+
+        ndarray = np.asarray(image, dtype=np.float32)
         if pad_w > 0 or pad_h > 0:
-            from PIL import ImageOps
+            ndarray = np.pad(ndarray, ((0, pad_h), (0, pad_w), (0, 0)), mode="edge")
 
-            image = ImageOps.expand(image, (0, 0, pad_w, pad_h), fill=0)
-
-        aligned_w, aligned_h = image.size
-        target_w, target_h = int(aligned_w * scale), int(aligned_h * scale)
-
-        device = devices.device
-        assert device.type == "cuda"
         devices.torch_gc()
 
-        ndarray: np.ndarray = np.asarray(image, dtype=np.uint8)
-        tensor: torch.Tensor = torch.from_numpy(ndarray)
-        tensor = tensor.permute(2, 0, 1).to(device=device, dtype=torch.float32)
-        tensor = torch.clamp(tensor.div_(255.0), 0.0, 1.0).contiguous()
+        tensor = (
+            torch.from_numpy(ndarray)
+            .permute(2, 0, 1)
+            .div_(255.0)
+            .clamp_(0.0, 1.0)
+            .contiguous()
+            .to(self.device)
+        )
 
-        vsr = self.get_model(quality, target_w, target_h)
-        result = vsr.run(tensor)
-        output: torch.Tensor = torch.from_dlpack(result.image)
+        with nvvfx.VideoSuperRes(quality) as sr:
+            sr.output_width = target_w
+            sr.output_height = target_h
+            sr.load()
 
-        tensor = output.detach().clone().permute(1, 2, 0).contiguous()
-        image_array = tensor.mul_(255.0).clamp_(0.0, 255.0)
-        image_numpy = image_array.cpu().numpy().astype("uint8")
+            dlpack_out = sr.run(tensor, stream_ptr=self.stream.cuda_stream).image
+            output = torch.from_dlpack(dlpack_out).detach().clone()
 
-        final_w, final_h = int(orig_w * scale), int(orig_h * scale)
-        result_img = Image.fromarray(image_numpy).crop((0, 0, final_w, final_h))
+        tensor = output.movedim(0, -1).mul_(255.0).round_().clamp_(0.0, 255.0)
+        image_numpy = tensor.cpu().numpy().astype("uint8")
+        result_img = Image.fromarray(image_numpy)
 
-        return result_img
+        return result_img.crop((0, 0, final_w, final_h))
 
     def do_upscale(self, *args, **kwargs):
-        raise SyntaxError
+        raise NotImplementedError
 
     def load_model(self, *args, **kwargs):
         raise NotImplementedError
