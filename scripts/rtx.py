@@ -6,7 +6,7 @@ import nvvfx
 import torch
 from PIL import Image
 
-from modules import devices, modelloader, shared
+from modules import devices, images, modelloader, shared
 from modules.script_callbacks import on_script_unloaded, on_ui_settings
 from modules.shared import OptionInfo, opts
 from modules.upscaler import Upscaler, UpscalerData
@@ -54,7 +54,7 @@ class UpscalerNvidia(Upscaler):
 
     @torch.inference_mode()
     def upscale(self, img: Image.Image, scale: float, selected_model: str):
-        image: Image.Image = img.convert("RGB")
+        image: Image.Image = images.flatten(img, opts.img2img_background_color)
         quality = getattr(nvvfx.effects.QualityLevel, selected_model)
 
         if selected_model.startswith(("DENOISE", "DEBLUR")):
