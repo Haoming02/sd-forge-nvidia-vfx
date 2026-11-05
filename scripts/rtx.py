@@ -19,7 +19,6 @@ class UpscalerNvidia(Upscaler):
         super().__init__(False)
         self.device = devices.device
         assert self.device.type == "cuda"
-        self.stream = torch.cuda.Stream(device=self.device)
 
         self.scalers = []
 
@@ -96,12 +95,12 @@ class UpscalerNvidia(Upscaler):
             .to(self.device)
         )
 
-        with nvvfx.VideoSuperRes(quality) as sr:
+        with torch.cuda.device(self.device), nvvfx.VideoSuperRes(quality, device=self.device.index) as sr:
             sr.output_width = target_w
             sr.output_height = target_h
             sr.load()
 
-            dlpack_out = sr.run(tensor, stream_ptr=self.stream.cuda_stream).image
+            dlpack_out = sr.run(tensor).image
             output = torch.from_dlpack(dlpack_out).detach().clone()
 
         tensor = output.movedim(0, -1).mul_(255.0).round_().clamp_(0.0, 255.0)
